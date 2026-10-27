@@ -1,15 +1,15 @@
-from schema import WindAnalyticsRequest
-import elexon_api
+from app.schema import WindAnalyticsRequest
+from app.elexon_api import FUELHH, WINDFOR
 import pandas as pd
 
 def wind_analytics(data:WindAnalyticsRequest):
-    elexon_windhh = elexon_api.FUELHH(
+    elexon_windhh = FUELHH(
         date_from=data.WINDHH_DateFrom,
         date_to=data.WINDHH_DateTo,
         settlement_period=data.WINDHH_SettlementPeriod,
         fuel_type=data.WINDHH_FuelType)
 
-    elexon_windfor = elexon_api.WINDFOR(
+    elexon_windfor = WINDFOR(
         date_from=data.WINDFOR_DateFrom,
         date_to=data.WINDFOR_DateTo)
 

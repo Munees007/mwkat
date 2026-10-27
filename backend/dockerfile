@@ -1,23 +1,17 @@
-# Use lightweight Python 3.11 image
 FROM python:3.11-slim
 
-# Prevent Python from writing .pyc files & buffer output
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Add working directory to Python import path
+ENV PYTHONPATH=/app
 
 WORKDIR /app
 
-# Copy requirements first to leverage Docker layer caching
 COPY requirements.txt .
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code
 COPY . .
 
-# Expose FastAPI port
 EXPOSE 8000
 
-# Run FastAPI via Uvicorn
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

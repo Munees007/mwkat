@@ -1,7 +1,7 @@
 import fastapi
 import uvicorn
-from analytics import wind_analytics
-from schema import WindAnalyticsRequest
+from app.analytics import wind_analytics
+from app.schema import WindAnalyticsRequest
 from fastapi.middleware.cors import CORSMiddleware
 app = fastapi.FastAPI()
 
