@@ -126,4 +126,5 @@ Use the local development URL printed by Vite. If the frontend expects a separat
 
 The application is intended to be deployed with the frontend hosted on Vercel and the Python backend hosted on a compatible service. Configure the frontend's API URL to point to the deployed backend.
 
-Add the actual deployment URLs once the services have been deployed and verified.
+live url: https://mwkat.vercel.app/
+github url: https://github.com/Munees007/mwkat
