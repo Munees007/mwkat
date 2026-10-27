@@ -13,7 +13,7 @@ def wind_analytics(data:WindAnalyticsRequest):
         date_from=data.WINDFOR_DateFrom,
         date_to=data.WINDFOR_DateTo)
 
-    windhh_df = pd.DataFrame(elexon_windhh['data']['data'])
+    windhh_df = pd.DataFrame(elexon_windhh["data"])
     #converting the date columns to datetime format
     windhh_df['startTime'] = pd.to_datetime(windhh_df['startTime'])
     windhh_df['publishTime'] = pd.to_datetime(windhh_df['publishTime'])
@@ -23,7 +23,7 @@ def wind_analytics(data:WindAnalyticsRequest):
         'generation': 'actual_mw'
     }, inplace=True)
 
-    windfor_df = pd.DataFrame(elexon_windfor['data']['data'])
+    windfor_df = pd.DataFrame(elexon_windfor["data"])
     #converting the date columns to datetime format
     windfor_df['publishTime'] = pd.to_datetime(windfor_df['publishTime'])
     windfor_df['startTime'] = pd.to_datetime(windfor_df['startTime'])
@@ -38,18 +38,25 @@ def wind_analytics(data:WindAnalyticsRequest):
         ['startTime', 'settlementDate', 'settlementPeriod', 'actual_mw']
     ]
 
-    # 2. Select needed columns from forecasts
-    windfor_clean = windfor_df[['startTime', 'publishTime', 'forecast_mw']]
+    
+    # 1. Filter forecast published before delivery target
+    valid_forecasts = windfor_df[
+        windfor_df['publishTime'] <= windfor_df['startTime']
+    ]
 
-    # 3. Merge cleanly on startTime
-    merged = pd.merge(windhh_clean, windfor_clean, on='startTime')
-
-    # 4. Now publishTime exists cleanly! Filter latest forecast prior to delivery
-    df = (
-        merged[merged['publishTime'] <= merged['startTime']]
+    # 2. DEDUPLICATE: Keep ONLY the latest publishTime for each startTime
+    latest_forecasts = (
+        valid_forecasts.sort_values('publishTime')
         .groupby('startTime')
         .last()
         .reset_index()
+    )
+
+    df = pd.merge(
+        windhh_clean,
+        latest_forecasts[['startTime', 'forecast_mw']],
+        on='startTime',
+        how='inner',
     )
 
     # 5. Difference calculations
@@ -70,6 +77,10 @@ def wind_analytics(data:WindAnalyticsRequest):
         "forecast_mw",
         "error",
     ]].to_dict(orient="records")
+
+    # print('Min Actual Date:', df['startTime'].min())
+    # print('Max Actual Date:', df['startTime'].max())
+    # print('Total Matched Rows:', len(df))
     
     # 3. Build return JSON payload
     return {
