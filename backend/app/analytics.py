@@ -1,94 +1,111 @@
-from app.schema import WindAnalyticsRequest
-from app.elexon_api import FUELHH, WINDFOR
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from fastapi import HTTPException
 import pandas as pd
 
-def wind_analytics(data:WindAnalyticsRequest):
+from app.elexon_api import FUELHH, WINDFOR
+from app.schema import WindAnalyticsRequest
+
+DECISION_CUTOFF_HOUR = 11
+UK_TIMEZONE = ZoneInfo("Europe/London")
+
+
+def _decision_cutoff_utc(start_time: pd.Timestamp) -> pd.Timestamp:
+    delivery_date = start_time.tz_convert(UK_TIMEZONE).date()
+    cutoff_local = datetime.combine(
+        delivery_date - timedelta(days=1),
+        time(hour=DECISION_CUTOFF_HOUR),
+        tzinfo=UK_TIMEZONE,
+    )
+    return pd.Timestamp(cutoff_local).tz_convert("UTC")
+
+
+def wind_analytics(data: WindAnalyticsRequest):
     elexon_windhh = FUELHH(
         date_from=data.WINDHH_DateFrom,
         date_to=data.WINDHH_DateTo,
         settlement_period=data.WINDHH_SettlementPeriod,
-        fuel_type=data.WINDHH_FuelType)
-
+        fuel_type=data.WINDHH_FuelType,
+    )
     elexon_windfor = WINDFOR(
         date_from=data.WINDFOR_DateFrom,
-        date_to=data.WINDFOR_DateTo)
+        date_to=data.WINDFOR_DateTo,
+    )
 
     windhh_df = pd.DataFrame(elexon_windhh["data"])
-    #converting the date columns to datetime format
-    windhh_df['startTime'] = pd.to_datetime(windhh_df['startTime'])
-    windhh_df['publishTime'] = pd.to_datetime(windhh_df['publishTime'])
-    windhh_df['settlementDate'] = pd.to_datetime(windhh_df['settlementDate'])
-    #renaming the columns to more readable names
-    windhh_df.rename(columns={
-        'generation': 'actual_mw'
-    }, inplace=True)
+    if windhh_df.empty:
+        raise HTTPException(
+            status_code=422,
+            detail="Elexon returned no FUELHH actual wind records for the requested dates.",
+        )
+    windhh_df["startTime"] = pd.to_datetime(windhh_df["startTime"], utc=True)
+    windhh_df.rename(columns={"generation": "actual_mw"}, inplace=True)
 
     windfor_df = pd.DataFrame(elexon_windfor["data"])
-    #converting the date columns to datetime format
-    windfor_df['publishTime'] = pd.to_datetime(windfor_df['publishTime'])
-    windfor_df['startTime'] = pd.to_datetime(windfor_df['startTime'])
-    #renaming the columns to more readable names
-    windfor_df.rename(columns={
-        'generation': 'forecast_mw'
-    }, inplace=True)
+    if windfor_df.empty:
+        raise HTTPException(
+            status_code=422,
+            detail="Elexon returned no WINDFOR forecasts for the requested publication window.",
+        )
+    windfor_df["publishTime"] = pd.to_datetime(
+        windfor_df["publishTime"], utc=True
+    )
+    windfor_df["startTime"] = pd.to_datetime(windfor_df["startTime"], utc=True)
+    windfor_df.rename(columns={"generation": "forecast_mw"}, inplace=True)
+    windfor_df["decision_cutoff"] = windfor_df["startTime"].map(
+        _decision_cutoff_utc
+    )
 
-
-    # 1. Select only needed columns from actuals (drop publishTime from actuals)
-    windhh_clean = windhh_df[
-        ['startTime', 'settlementDate', 'settlementPeriod', 'actual_mw']
-    ]
-
-    
-    # 1. Filter forecast published before delivery target
+    windhh_clean = windhh_df[["startTime", "actual_mw"]]
     valid_forecasts = windfor_df[
-        windfor_df['publishTime'] <= windfor_df['startTime']
+        windfor_df["publishTime"] <= windfor_df["decision_cutoff"]
     ]
-
-    # 2. DEDUPLICATE: Keep ONLY the latest publishTime for each startTime
     latest_forecasts = (
-        valid_forecasts.sort_values('publishTime')
-        .groupby('startTime')
-        .last()
-        .reset_index()
+        valid_forecasts.sort_values(["startTime", "publishTime"])
+        .drop_duplicates(subset="startTime", keep="last")
     )
 
     df = pd.merge(
         windhh_clean,
-        latest_forecasts[['startTime', 'forecast_mw']],
-        on='startTime',
-        how='inner',
+        latest_forecasts[["startTime", "publishTime", "forecast_mw"]],
+        on="startTime",
+        how="inner",
+    ).sort_values("startTime")
+
+    if df.empty:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No actual wind records matched forecasts published by "
+                "11:00 Europe/London on the day before delivery."
+            ),
+        )
+
+    df["error"] = df["forecast_mw"] - df["actual_mw"]
+    df["abs_error"] = df["error"].abs()
+    df["startTime_str"] = df["startTime"].dt.strftime("%Y-%m-%d %H:%M")
+    df["forecast_publish_time"] = df["publishTime"].dt.strftime(
+        "%Y-%m-%d %H:%M UTC"
     )
 
-    # 5. Difference calculations
-    df['error'] = df['forecast_mw'] - df['actual_mw']
-    df['abs_error'] = df['error'].abs()
+    chart_data = df[
+        [
+            "startTime_str",
+            "forecast_publish_time",
+            "actual_mw",
+            "forecast_mw",
+            "error",
+        ]
+    ].to_dict(orient="records")
 
-    mae = df['abs_error'].mean()
-    rmse = (df['error'] ** 2).mean() ** 0.5
-    bias = df['error'].mean()
-
-    # 1. Format timestamps to strings so FastAPI can serialize them easily
-    df["startTime_str"] = df["startTime"].dt.strftime("%Y-%m-%d %H:%M")
-
-    # 2. Select columns needed for frontend charts and table
-    chart_data = df[[
-        "startTime_str",
-        "actual_mw",
-        "forecast_mw",
-        "error",
-    ]].to_dict(orient="records")
-
-    # print('Min Actual Date:', df['startTime'].min())
-    # print('Max Actual Date:', df['startTime'].max())
-    # print('Total Matched Rows:', len(df))
-    
-    # 3. Build return JSON payload
     return {
         "status": "success",
+        "decision_cutoff": "11:00 Europe/London on the day before delivery",
         "kpis": {
-            "mae": round(float(mae), 2),
-            "rmse": round(float(rmse), 2),
-            "bias": round(float(bias), 2),
+            "mae": round(float(df["abs_error"].mean()), 2),
+            "rmse": round(float((df["error"] ** 2).mean() ** 0.5), 2),
+            "bias": round(float(df["error"].mean()), 2),
             "total_records": len(df),
         },
         "chart_data": chart_data,

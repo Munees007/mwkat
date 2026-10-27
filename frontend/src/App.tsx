@@ -48,13 +48,19 @@ function App() {
 
   const [selectedPeriods, setSelectedPeriods] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const API_URL = import.meta.env.PROD 
   ? '/api/wind_analytics' 
   : 'http://localhost:8000/api/wind_analytics';
   const handleFetchAnalytics = async () => {
+    setError(null);
+    setData(null);
+    setAnalyticCardsData([]);
     setLoading(true);
     try {
-      const windforFrom = `${dateFrom}T00:00:00Z`;
+      const windforStart = new Date(`${dateFrom}T00:00:00Z`);
+      windforStart.setUTCDate(windforStart.getUTCDate() - 7);
+      const windforFrom = windforStart.toISOString();
       const windforTo = `${dateTo}T23:59:59Z`;
       
       const response = await axios.post(
@@ -105,6 +111,12 @@ function App() {
       setData(res);
     } catch (err) {
       console.error(err);
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : null;
+      setError(
+        typeof detail === "string"
+          ? detail
+          : "Unable to load wind analytics. Check the API connection and try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -114,12 +126,14 @@ function App() {
     if (!data?.chart_data) return;
     const headers = [
       "Start Time",
+      "Forecast Published (UTC)",
       "Actual (MW)",
       "Forecast (MW)",
       "Error (MW)",
     ];
     const rows = data.chart_data.map((row) => [
       row.startTime_str,
+      row.forecast_publish_time,
       row.actual_mw,
       row.forecast_mw,
       row.error,
@@ -195,6 +209,14 @@ function App() {
         <ThunderLoader message="Processing January 2026 Elexon Chunks..." />
       ) : (
         <div>
+          {error && (
+            <div
+              role="alert"
+              className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200"
+            >
+              {error}
+            </div>
+          )}
           <div className="grid grid-cols-4 gap-3">
             {analyticCardsData.map((card, index) => (
               <AnalyticCard
@@ -223,8 +245,8 @@ function App() {
                       </h2>
 
                       <p className="text-xs text-slate-400">
-                        Comparing actual outturn generation against day-ahead
-                        locked predictions
+                        Latest Elexon forecast published by 11:00 UK time on
+                        the day before delivery
                       </p>
                     </div>
                   </div>
@@ -316,6 +338,42 @@ function App() {
                 </div>
               </div>
             </div>
+          )}
+          {data && (
+            <details className="mt-3 rounded-xl bg-bg-card p-4">
+              <summary className="cursor-pointer font-medium text-white">
+                Inspect selected forecast publication times
+              </summary>
+              <p className="mb-3 mt-2 text-xs text-slate-400">
+                Each row shows the latest matched forecast published by{" "}
+                {data.decision_cutoff}. Publication times are UTC.
+              </p>
+              <div className="max-h-96 overflow-auto">
+                <table className="w-full text-left text-sm text-slate-300">
+                  <thead className="sticky top-0 bg-bg-secondary text-xs uppercase text-slate-200">
+                    <tr>
+                      <th className="p-2">Delivery start</th>
+                      <th className="p-2">Forecast published</th>
+                      <th className="p-2">Forecast (MW)</th>
+                      <th className="p-2">Actual (MW)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.chart_data.map((row) => (
+                      <tr
+                        key={row.startTime_str}
+                        className="border-t border-slate-700"
+                      >
+                        <td className="p-2">{row.startTime_str} UTC</td>
+                        <td className="p-2">{row.forecast_publish_time}</td>
+                        <td className="p-2">{row.forecast_mw}</td>
+                        <td className="p-2">{row.actual_mw}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           )}
         </div>
       )}

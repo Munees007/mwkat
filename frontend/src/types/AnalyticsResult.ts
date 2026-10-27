@@ -6,6 +6,7 @@ export type kpisType = {
 }
 export type chartDataType = {
     startTime_str:string,
+    forecast_publish_time:string,
     actual_mw:number,
     forecast_mw:number,
     error:number
@@ -13,5 +14,6 @@ export type chartDataType = {
 export interface AnalyticsType
 {
     kpis: kpisType,
+    decision_cutoff: string,
     chart_data:chartDataType[]
 }

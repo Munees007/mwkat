@@ -1,120 +1,129 @@
 # Day-Ahead Wind Generation & Forecast Analytics Dashboard
 
-An interactive control-room dashboard built for UK energy utilities to evaluate day-ahead wind generation forecasts against actual outturn generation.
+An interactive analytics dashboard designed for UK energy trading teams to compare wind generation forecasts published by Elexon with actual wind generation and evaluate forecast accuracy for January 2026.
 
-This application isolates **gate-closure day-ahead forecasts** (11:00 AM UTC on D-1) to eliminate look-ahead bias and quantifies forecast error metrics (MAE, RMSE, Bias). This helps power traders determine how much additional thermal or balancing generation needs to be procured to meet consumer demand.
-
----
+The application retrieves data from Elexon's BMRS API, aligns forecast and actual generation records, and presents forecast error metrics and visual comparisons. It helps users understand forecast uncertainty when assessing day-ahead electricity procurement risk.
 
 ## Technical Stack & Architecture
 
-* **Frontend:** React 18, Vite, TypeScript, Tailwind CSS, Recharts, Lucide Icons.
-* **Backend:** Python 3.11, FastAPI, Pandas, NumPy, Uvicorn.
-* **Data Source:** Elexon BMRS Stream API (`FUELHH` for actuals, `WINDFOR` for forecasts).
-* **Containerization:** Docker & Docker Compose.
-
----
+- **Frontend:** React 19, Vite, TypeScript, Tailwind CSS, Recharts and Lucide Icons.
+- **Backend:** Python 3.11, FastAPI, Pandas, NumPy and Uvicorn.
+- **Data Source:** Elexon BMRS Stream API — `FUELHH` for actual generation and `WINDFOR` for wind forecasts.
+- **Containerization:** Docker and Docker Compose.
 
 ## Core Domain & Analytics Logic
 
-1. **Day-Ahead Auction Cutoff (11:00 AM UTC D-1):**
-* Bids close at 11:00 AM UTC on Day D-1 for delivery on Day D.
-* The backend filters out all intraday forecasts published after gate closure and selects the latest valid forecast available to traders prior to the 11:00 AM cutoff.
+### 1. Historical Forecast Selection
 
+The dashboard compares actual wind generation with eligible forecast records for the selected delivery periods.
 
-2. **30-Minute to 1-Hour Settlement Deduplication:**
-* `FUELHH` (actuals) provides 30-minute settlement period outturns, while `WINDFOR` provides 1-hour resolution forecasts.
-* The backend deduplicates and aligns forecast publication timestamps with actual target delivery times using an inner join on exact target `startTime` records.
+For each delivery timestamp, the backend calculates 11:00 Europe/London on the preceding calendar day as the decision cutoff. It filters out forecasts published after that cutoff and selects the latest eligible `publishTime` for each delivery timestamp. The cutoff is timezone-aware and follows UK daylight-saving changes. The selected publication time is available in the audit table and CSV export.
 
+The 11:00 UK-local cutoff is an implementation assumption based on the agreed product requirement; confirm it with the trading team before using the results as an operational trading control. Forecast publication data is fetched from seven days before the selected delivery-date range through its end, so the selected record is the latest eligible publication within that fetched window.
 
-3. **Quantitative Error Metrics:**
-* **MAE (Mean Absolute Error):** Measures the baseline magnitude of forecast inaccuracy.
-* **RMSE (Root Mean Squared Error):** Penalizes large, abrupt forecast spikes.
-* **System Bias:** Identifies systematic over-forecasting (+) or under-forecasting (-) trends.
+### 2. Data Retrieval and Alignment
 
+- `FUELHH` provides actual generation records associated with settlement periods.
+- `WINDFOR` provides wind generation forecast records with publication and delivery timestamps.
+- The backend fetches data in smaller date or timestamp ranges, including the seven-day publication lookback needed to cover the first delivery day's preceding-day cutoff.
+- Forecasts are filtered against each delivery timestamp's day-ahead cutoff and deduplicated by delivery timestamp, retaining the latest eligible publication time.
+- An inner join on `startTime` retains only records with matching delivery timestamps in both datasets.
 
+The resulting matched dataset is used for the forecast comparison. The API returns an explicit error when no eligible forecast/actual timestamps match. The dashboard shows the selected publication times and the number of matched settlement periods; unmatched-period coverage should still be considered when interpreting metrics.
 
----
+### 3. Quantitative Forecast Error Metrics
+
+The backend calculates three metrics from the matched forecast and actual generation values.
+
+- **Mean Absolute Error (MAE):** The average absolute difference between forecast and actual generation.
+- **Root Mean Squared Error (RMSE):** A measure that gives larger errors more weight.
+- **System Bias:** The mean signed error, calculated as forecast generation minus actual generation. Positive values indicate overforecasting on average; negative values indicate underforecasting on average.
+
+The dashboard also displays the number of matched records and visualises the forecast, actual generation and signed error over time. CSV exports include the selected forecast publication timestamp.
+
+### 4. Interpretation and Scope
+
+Positive forecast errors indicate periods when forecast wind generation exceeded actual wind generation. These periods can highlight potential wind shortfall risk.
+
+However, the calculated error is not the same as the total thermal generation required to meet demand. Estimating actual procurement requirements would also require demand and other relevant supply information, which are outside the scope of this assignment.
 
 ## AI Assistance & Tool Disclosure
 
-In accordance with the assessment guidelines, **Google Gemini** was used as an AI thought partner and code collaborator throughout the development of this application.
-
-Specifically, Gemini was used for:
-
-* **Domain Logic Verification:** Double-checking UK day-ahead market gate closure constraints and cutoff math.
-* **Data Processing Logic:** Refining Pandas vectorized methods for time-chunking Elexon API calls and deduplicating historical forecasts.
-* **UI Scaffolding:** Drafting Tailwind CSS layout concepts and Recharts component setups.
-* **Troubleshooting:** Debugging Pandas DataFrame join keys (`KeyError` issues during merges) and configuring Docker multi-stage builds.
-
----
+Google Gemini was used as an AI assistant during development to support domain research, code development, UI scaffolding and troubleshooting. The developer reviewed and integrated the generated suggestions into the application.
 
 ## Running the Application via Docker
 
-The entire stack (FastAPI backend + Vite React frontend) can be spun up using Docker Compose:
+Start the application using Docker Compose:
 
 ```bash
-# Clone the anonymous repository
-git clone <your-repo-url>
-cd <repo-folder>
-
-# Build and run using Docker Compose
 docker compose up --build
-
 ```
 
-Once started:
+Once the containers are running:
 
-* **Frontend App:** Access at `http://localhost:1573`
-* **FastAPI Backend / Docs:** Access Swagger UI at `http://localhost:8000/docs`
+- **Frontend:** `http://localhost:1573`
+- **Backend API documentation:** `http://localhost:8000/docs`
 
----
+## Manual Local Setup
 
-## Manual Local Setup (Without Docker)
-
-### 1. Backend Setup
+### Backend
 
 ```bash
 cd backend
 python -m venv venv
-# On Windows: venv\Scripts\activate | On Mac/Linux: source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-
 ```
 
-### 2. Frontend Setup
+Activate the virtual environment:
+
+```bash
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+```
+
+Install dependencies and start the API:
+
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### Frontend
 
 ```bash
 cd frontend
 npm install
 npm run dev
-
 ```
 
----
+Use the local development URL printed by Vite. If the frontend expects a separate backend URL, configure it according to the project's environment settings.
 
 ## Project Structure
 
 ```text
 ├── backend/
 │   ├── app/
-│   │   ├── main.py           # FastAPI entry point & routes
-│   │   ├── analytics.py      # Day-ahead cutoff logic & metric calculations
-│   │   └── elexon_api.py     # Date-chunking API fetcher (FUELHH & WINDFOR)
+│   │   ├── main.py
+│   │   ├── analytics.py
+│   │   └── elexon_api.py
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── components/       # KPI cards, charts, thunder loader, navbar
-│   │   ├── types/            # TypeScript interfaces
-│   │   └── App.tsx           # Dashboard view & state management
+│   │   ├── components/
+│   │   ├── types/
+│   │   └── App.tsx
 │   ├── Dockerfile
-│   ├── nginx.conf            # SPA routing config for Docker build
+│   ├── nginx.conf
 │   └── vite.config.ts
 ├── docker-compose.yml
 └── README.md
-
 ```
 
----
+## Deployment
+
+The application is intended to be deployed with the frontend hosted on Vercel and the Python backend hosted on a compatible service. Configure the frontend's API URL to point to the deployed backend.
+
+Add the actual deployment URLs once the services have been deployed and verified.
